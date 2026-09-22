@@ -59,6 +59,46 @@ public class ManagementApiRuleTests : IAsyncLifetime
         return new StringContent(xml, Encoding.UTF8, "application/atom+xml");
     }
 
+    private StringContent SqlRuleXmlBody(string ruleName, string expression)
+    {
+        var rule = new RuleEntity
+        {
+            Name = ruleName,
+            FilterType = FilterType.SqlFilter,
+            SqlExpression = expression
+        };
+        var xml = AtomXmlWriter.WriteRuleEntry(rule, TopicName, SubName);
+        return new StringContent(xml, Encoding.UTF8, "application/atom+xml");
+    }
+
+    [Fact]
+    public async Task CreateRule_UnparsableSqlFilter_Returns400_AndInstallsNothing()
+    {
+        var response = await _client.PutAsync(
+            $"/{TopicName}/Subscriptions/{SubName}/Rules/bad",
+            SqlRuleXmlBody("bad", "user.TenantId IN ("));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        // A rule that could not be parsed must not reach the subscription: a filter that
+        // matched everything would turn a filtered subscription into a firehose.
+        var lookup = await _client.GetAsync($"/{TopicName}/Subscriptions/{SubName}/Rules/bad");
+        Assert.Equal(HttpStatusCode.NotFound, lookup.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateRule_ValidSqlFilter_Returns201()
+    {
+        var response = await _client.PutAsync(
+            $"/{TopicName}/Subscriptions/{SubName}/Rules/good",
+            SqlRuleXmlBody("good", "user.TenantId IN ('a','A') AND sys.Label = 'Created'"));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var lookup = await _client.GetAsync($"/{TopicName}/Subscriptions/{SubName}/Rules/good");
+        Assert.Equal(HttpStatusCode.OK, lookup.StatusCode);
+    }
+
     [Fact]
     public async Task GetDefaultRule_Returns200()
     {

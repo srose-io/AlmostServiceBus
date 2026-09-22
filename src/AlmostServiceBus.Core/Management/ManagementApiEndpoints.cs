@@ -70,6 +70,12 @@ public static class ManagementApiEndpoints
                     CorrelationFilterProperties = props.CorrelationFilterProperties,
                     ActionExpression = props.ActionExpression
                 };
+
+                // A SQL filter that does not parse is rejected here, as Azure does. Installing
+                // it would leave a subscription whose rule can never be evaluated.
+                if (!rule.TryValidateSqlFilter(out var filterError))
+                    return ManagementApiErrors.InvalidSqlFilter(props.SqlExpression, filterError!);
+
                 sub.AddOrUpdateRule(rule);
 
                 var xml = AtomXmlWriter.WriteRuleEntry(rule, topicName, subName, baseUrl);
@@ -97,7 +103,13 @@ public static class ManagementApiEndpoints
                     sub = topic.AddSubscription(subName);
                 }
 
-                ApplySubscriptionProperties(sub, body, ns);
+                var subFilterError = ApplySubscriptionProperties(sub, body, ns);
+                if (subFilterError is not null)
+                {
+                    // A rejected create leaves nothing behind.
+                    if (!isUpdate) topic.RemoveSubscription(subName);
+                    return ManagementApiErrors.InvalidSqlFilter(null, subFilterError);
+                }
 
                 var xml = AtomXmlWriter.WriteSubscriptionEntry(sub, baseUrl);
                 return Results.Content(xml, AtomXmlContentType,
@@ -484,7 +496,11 @@ public static class ManagementApiEndpoints
         }
     }
 
-    private static void ApplySubscriptionProperties(SubscriptionEntity entity, string body, NamespaceContext ns)
+    /// <summary>
+    /// Applies the subscription properties in <paramref name="body"/>. Returns a reason when the
+    /// request carries a rule the broker will not accept, and null otherwise.
+    /// </summary>
+    private static string? ApplySubscriptionProperties(SubscriptionEntity entity, string body, NamespaceContext ns)
     {
         try
         {
@@ -511,7 +527,6 @@ public static class ManagementApiEndpoints
             // with the desired rule inlined rather than making separate DELETE + PUT calls.
             if (props.DefaultRule is not null)
             {
-                entity.RemoveRule("$Default");
                 var rule = new RuleEntity
                 {
                     Name = props.DefaultRule.Name,
@@ -526,6 +541,11 @@ public static class ManagementApiEndpoints
                     CorrelationFilterProperties = props.DefaultRule.CorrelationFilterProperties,
                     ActionExpression = props.DefaultRule.ActionExpression,
                 };
+
+                if (!rule.TryValidateSqlFilter(out var filterError))
+                    return filterError;
+
+                entity.RemoveRule("$Default");
                 entity.AddOrUpdateRule(rule);
             }
         }
@@ -533,5 +553,7 @@ public static class ManagementApiEndpoints
         {
             // Malformed XML — leave defaults
         }
+
+        return null;
     }
 }

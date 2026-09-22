@@ -15,6 +15,20 @@ public static class ManagementApiErrors
         return Results.Content(xml, ContentType, statusCode: StatusCodes.Status404NotFound);
     }
 
+    /// <summary>
+    /// A SQL filter that does not parse. Azure answers 400 at rule creation rather than
+    /// installing a rule it cannot evaluate, and so do we: a filter that silently matched
+    /// everything would make a filtered subscription a firehose.
+    /// </summary>
+    public static IResult InvalidSqlFilter(string? expression, string reason)
+    {
+        var detail = expression is null
+            ? $"The SQL filter expression could not be parsed. {reason}"
+            : $"The SQL filter expression '{expression}' could not be parsed. {reason}";
+        var xml = $"<Error><Code>400</Code><Detail>{System.Security.SecurityElement.Escape(detail)}</Detail></Error>";
+        return Results.Content(xml, ContentType, statusCode: StatusCodes.Status400BadRequest);
+    }
+
     public static IResult EntityAlreadyExists(string entityName)
     {
         var xml = $"<Error><Code>509</Code><Detail>Entity '{entityName}' already exists.</Detail></Error>";

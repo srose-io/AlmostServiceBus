@@ -1642,4 +1642,141 @@ public abstract class ConformanceTestBase : IAsyncLifetime
 
         Assert.Contains("multiple top-level entities", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SQL filter grammar — the shapes a multi-tenant topology generates
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Every rule shape the InPlace CLI generates, over the four messages spike S6 measured,
+    /// against whichever broker this class is wired to. The point of running it here rather than
+    /// only as a unit test is that the same expectations then run against real Azure Service Bus
+    /// (set ASB_CONNECTION_STRING), which is the only authority on what these rules mean.
+    /// </summary>
+    /// <remarks>
+    /// The expectations follow Azure's documented three-valued semantics: a comparison, a LIKE
+    /// or an IN whose operand is a missing property evaluates to UNKNOWN, and only TRUE
+    /// delivers. That is why <c>not-in</c> passes A alone — message B has no
+    /// <c>messageType</c> property, so <c>NOT IN</c> is UNKNOWN rather than true.
+    /// </remarks>
+    public static TheoryData<string, string, string> SqlFilterShapes => new()
+    {
+        { "in-and-in", "user.TenantId IN ('loom-full','LOOM-FULL') AND user.EntityType IN ('dbo_Student','dbo_X')", "A" },
+        { "eq-and-eq", "user.TenantId = 'loom-full' AND user.EntityType = 'dbo_Student'", "A" },
+        { "in-and-eq", "user.TenantId IN ('loom-full','LOOM-FULL') AND user.EntityType = 'dbo_Student'", "A" },
+        { "paren-in-and-in", "(user.TenantId IN ('loom-full','LOOM-FULL')) AND (user.EntityType IN ('dbo_Student','dbo_X'))", "A" },
+        { "in-only", "user.TenantId IN ('loom-full','LOOM-FULL')", "AB" },
+        { "label-and-in", "sys.Label = 'Created' AND user.TenantId IN ('loom-full','LOOM-FULL')", "A" },
+        { "in-and-label", "user.TenantId IN ('loom-full','LOOM-FULL') AND sys.Label = 'Created'", "A" },
+        { "like", "user.PrivateKeys LIKE '%loom-full_%'", "A" },
+        { "not-in", "user.messageType NOT IN ('MergeJobStatus','EdsJobStatus')", "A" },
+        { "isnull-or", "user.TenantType IS NULL OR user.tenantType <> 'eds'", "ABD" },
+        { "numeric-in", "user.InFlowActionType IN (1,2,3)", "" },
+        { "exists", "EXISTS(user.EntityType)", "AC" },
+        { "not-exists", "NOT EXISTS(user.EntityType)", "BD" },
+        { "isnotnull-or-eq", "user.MessageType = 'a' OR user.EntityType IS NOT NULL", "AC" },
+    };
+
+    [Theory]
+    [MemberData(nameof(SqlFilterShapes))]
+    public async Task SqlFilter_Shapes_PassExactlyTheExpectedMessages(string name, string expression, string expected)
+    {
+        ThrowIfSkipped();
+
+        var topic = await CreateTestTopicAsync();
+        var subscription = $"f-{name}";
+        await AdminClient.CreateSubscriptionAsync(
+            new CreateSubscriptionOptions(topic, subscription),
+            new CreateRuleOptions("r", new SqlRuleFilter(expression)));
+
+        await using var sender = Client.CreateSender(topic);
+        foreach (var message in SqlFilterProbeMessages())
+            await sender.SendMessageAsync(message);
+
+        // Real Azure needs a moment for a fan-out to settle before a peek sees it.
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        await using var receiver = Client.CreateReceiver(topic, subscription);
+        var peeked = await receiver.PeekMessagesAsync(10);
+        var passed = string.Concat(peeked.Select(m => m.Body.ToString()[0]).Order());
+
+        Assert.Equal(expected, passed);
+    }
+
+    /// <summary>
+    /// The four messages from spike S6: A has everything, B has the tenant only, C is another
+    /// tenant, D has nothing at all.
+    /// </summary>
+    private static IEnumerable<ServiceBusMessage> SqlFilterProbeMessages()
+    {
+        var a = new ServiceBusMessage("A tenant+entity") { Subject = "Created" };
+        a.ApplicationProperties["TenantId"] = "loom-full";
+        a.ApplicationProperties["EntityType"] = "dbo_Student";
+        a.ApplicationProperties["PrivateKeys"] = "x_loom-full_1";
+        a.ApplicationProperties["messageType"] = "Other";
+        yield return a;
+
+        var b = new ServiceBusMessage("B tenant only") { Subject = "Updated" };
+        b.ApplicationProperties["TenantId"] = "loom-full";
+        yield return b;
+
+        var c = new ServiceBusMessage("C other tenant+entity") { Subject = "Created" };
+        c.ApplicationProperties["TenantId"] = "loom-other";
+        c.ApplicationProperties["EntityType"] = "dbo_Student";
+        c.ApplicationProperties["messageType"] = "MergeJobStatus";
+        c.ApplicationProperties["TenantType"] = "eds";
+        yield return c;
+
+        yield return new ServiceBusMessage("D nothing");
+    }
+
+    [Fact]
+    public async Task SqlFilter_UnparsableExpression_IsRejectedAtRuleCreation()
+    {
+        ThrowIfSkipped();
+
+        var topic = await CreateTestTopicAsync();
+        await CreateTestSubscriptionAsync(topic, "bad-rule");
+
+        // A filter the broker cannot parse must fail at creation. Accepting it and then
+        // matching everything is the failure this suite exists to catch.
+        await Assert.ThrowsAnyAsync<Exception>(async () =>
+            await AdminClient.CreateRuleAsync(topic, "bad-rule",
+                new CreateRuleOptions("r", new SqlRuleFilter("user.TenantId IN ("))));
+
+        var rules = new List<RuleProperties>();
+        await foreach (var rule in AdminClient.GetRulesAsync(topic, "bad-rule"))
+            rules.Add(rule);
+
+        Assert.DoesNotContain(rules, r => r.Name == "r");
+    }
+
+    [Fact]
+    public async Task SqlFilter_CaseSensitivity_NamesInsensitive_ValuesSensitive()
+    {
+        ThrowIfSkipped();
+
+        var topic = await CreateTestTopicAsync();
+        await AdminClient.CreateSubscriptionAsync(
+            new CreateSubscriptionOptions(topic, "case-sub"),
+            new CreateRuleOptions("r", new SqlRuleFilter("user.tenantid = 'loom-full'")));
+
+        await using var sender = Client.CreateSender(topic);
+
+        var exact = new ServiceBusMessage("exact");
+        exact.ApplicationProperties["TenantId"] = "loom-full";
+        await sender.SendMessageAsync(exact);
+
+        var wrongCase = new ServiceBusMessage("upper");
+        wrongCase.ApplicationProperties["TenantId"] = "LOOM-FULL";
+        await sender.SendMessageAsync(wrongCase);
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        await using var receiver = Client.CreateReceiver(topic, "case-sub");
+        var peeked = await receiver.PeekMessagesAsync(10);
+
+        // The property name matched in the wrong case; the value did not.
+        Assert.Equal(["exact"], peeked.Select(m => m.Body.ToString()).ToArray());
+    }
 }

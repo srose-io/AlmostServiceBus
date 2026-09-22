@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project follows
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **SQL filters are parsed, not pattern-matched.** `RuleEntity` evaluated SQL
+  filters with a ladder of regular expressions and *matched* anything it did
+  not recognise — twice, once in a `catch`. `IN`, `NOT IN`, `sys.` properties
+  on the left of a comparison and case-insensitive property names all fell
+  through, so a rule such as
+  `user.TenantId IN ('tenant','TENANT') AND user.EntityType IN (...)` made a
+  filtered subscription a firehose that delivered every tenant's messages to
+  every tenant. It is replaced by a tokenizer and a precedence parser over
+  Azure's documented SQL filter grammar: `=`, `<>`, `!=`, `<`, `>`, `<=`, `>=`,
+  `IN`, `NOT IN`, `LIKE … [ESCAPE …]`, `NOT LIKE`, `IS [NOT] NULL`, `EXISTS`,
+  `AND`, `OR`, `NOT`, parentheses, arithmetic, the `sys.` and `user.` scopes,
+  and three-valued null semantics — a comparison touching a missing property is
+  UNKNOWN, `AND`/`OR`/`NOT` follow Azure's published truth tables, and only
+  TRUE delivers. A filter that does not parse is now rejected with **400** at
+  rule creation, as Azure does, and never matches if one reaches the broker
+  another way.
+
 ## [0.6.0] - 2026-09-11
 
 ### Added
