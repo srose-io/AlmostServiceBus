@@ -1779,4 +1779,60 @@ public abstract class ConformanceTestBase : IAsyncLifetime
         // The property name matched in the wrong case; the value did not.
         Assert.Equal(["exact"], peeked.Select(m => m.Body.ToString()).ToArray());
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sessionless fan-out at a session subscription
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task SessionlessMessage_AtSessionSubscription_IsDeadLetteredNotRejected()
+    {
+        ThrowIfSkipped();
+
+        var topic = await CreateTestTopicAsync();
+        await AdminClient.CreateSubscriptionAsync(new CreateSubscriptionOptions(topic, "session-sub")
+        {
+            RequiresSession = true
+        });
+        await CreateTestSubscriptionAsync(topic, "plain-sub");
+
+        await using var sender = Client.CreateSender(topic);
+
+        // The publish succeeds: one subscription that cannot hold the message must not fail the
+        // transfer for the rest of the topic.
+        await sender.SendMessageAsync(new ServiceBusMessage("no-session"));
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        await using var deadLetters = Client.CreateReceiver(topic, "session-sub",
+            new ServiceBusReceiverOptions { SubQueue = SubQueue.DeadLetter });
+        var dead = await deadLetters.PeekMessagesAsync(10);
+        var deadLettered = Assert.Single(dead);
+        Assert.Equal("no-session", deadLettered.Body.ToString());
+        Assert.Equal("SessionIdIsNull", deadLettered.DeadLetterReason);
+
+        // Nothing active on the session subscription, and the plain one got its copy.
+        await using var active = Client.CreateReceiver(topic, "session-sub");
+        Assert.Empty(await active.PeekMessagesAsync(10));
+
+        await using var plain = Client.CreateReceiver(topic, "plain-sub");
+        Assert.Single(await plain.PeekMessagesAsync(10));
+    }
+
+    [Fact]
+    public async Task SessionlessMessage_AtSessionQueue_IsRejectedAtTheSender()
+    {
+        ThrowIfSkipped();
+
+        var queue = await CreateTestQueueAsync(new CreateQueueOptions("placeholder")
+        {
+            RequiresSession = true
+        });
+
+        await using var sender = Client.CreateSender(queue);
+
+        // A queue, unlike a subscription, has nowhere else to put it: Azure rejects the send.
+        await Assert.ThrowsAnyAsync<Exception>(
+            async () => await sender.SendMessageAsync(new ServiceBusMessage("no-session")));
+    }
 }

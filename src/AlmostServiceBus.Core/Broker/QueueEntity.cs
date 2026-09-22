@@ -187,10 +187,11 @@ public sealed class QueueEntity : IDisposable
         {
             if (string.IsNullOrEmpty(message.SessionId))
             {
-                // Real Service Bus rejects with InvalidOperationException when sending
-                // a non-session message to a session-required entity. The SDK propagates
-                // this back to the caller; previously we silently dropped, which masked
-                // application bugs.
+                // Real Service Bus rejects with InvalidOperationException when a client sends a
+                // non-session message to a session-required entity, and the SDK propagates that
+                // back to the caller. A message arriving by topic fan-out is different: Azure
+                // dead-letters it at the subscription rather than failing the publish, so
+                // SubscriptionEntity routes that case to DeadLetterOnArrival before it gets here.
                 throw new InvalidOperationException(
                     $"Cannot send a message without a SessionId to session-required queue '{Name}'.");
             }
@@ -235,6 +236,32 @@ public sealed class QueueEntity : IDisposable
         Interlocked.Increment(ref _messageCount);
         Interlocked.Increment(ref _totalMessageCount);
         PublishEnqueued(message);
+    }
+
+    /// <summary>
+    /// Dead-letters a message on arrival, without it ever becoming active on this queue.
+    /// Azure uses this for a fan-out a subscription cannot accept — a message with no
+    /// <c>SessionId</c> reaching a session-required subscription — where failing the publish
+    /// would punish every other subscription on the topic for one subscription's shape.
+    /// </summary>
+    public void DeadLetterOnArrival(BrokeredMessage message, string reason, string description)
+    {
+        message.DeadLetterReason = reason;
+        message.DeadLetterErrorDescription = description;
+        message.DeadLetterSource = Name;
+        message.LockToken = null;
+        message.State = MessageState.Active;
+
+        // Counted on this entity, as Azure counts it: the message arrived here and was
+        // dead-lettered here, so the subscription's total reflects it.
+        Interlocked.Increment(ref _totalMessageCount);
+
+        _eventBus?.Publish(new MessageEvent(
+            MessageEventType.DeadLettered, _namespaceName ?? "", _entityName ?? "",
+            message.MessageId, message.SequenceNumber, message.ContentType,
+            null, null, DateTimeOffset.UtcNow));
+
+        DeadLetterQueue.Enqueue(message);
     }
 
     private void PublishEnqueued(BrokeredMessage message)

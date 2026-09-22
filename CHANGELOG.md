@@ -23,6 +23,14 @@ All notable changes to this project are documented here. The format is based on
   TRUE delivers. A filter that does not parse is now rejected with **400** at
   rule creation, as Azure does, and never matches if one reaches the broker
   another way.
+- **A sessionless message at a session subscription is dead-lettered, not a
+  publish failure.** Publishing a message with no `SessionId` to a topic with
+  any session-required subscription threw out of `QueueEntity.Enqueue` and
+  failed the whole transfer, so one subscription's shape starved every other
+  subscription on the topic. The fan-out now dead-letters at that subscription
+  with reason `SessionIdIsNull`, as Azure and Microsoft's emulator do, and the
+  publish succeeds. A session-required *queue* still rejects at the sender,
+  which is also what Azure does.
 
 ## [0.6.0] - 2026-09-11
 

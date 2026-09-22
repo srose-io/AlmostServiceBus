@@ -111,6 +111,24 @@ public sealed class SubscriptionEntity
             return;
 
         var destination = ResolvedForwardToQueue ?? Queue;
+
+        // A session-required subscription cannot hold a message with no SessionId. Azure
+        // dead-letters it here, at this subscription, and lets the publish succeed; throwing
+        // would fail the whole transfer and punish every other subscription on the topic for
+        // one subscription's shape. (A session-required *queue* still rejects at the sender,
+        // which is also what Azure does — see QueueEntity.Enqueue.)
+        if (destination.RequiresSession && string.IsNullOrEmpty(message.SessionId))
+        {
+            destination.DeadLetterOnArrival(
+                message,
+                SessionIdIsNullReason,
+                "Message has no session id and the entity requires a session.");
+            return;
+        }
+
         destination.Enqueue(message);
     }
+
+    /// <summary>Azure's dead-letter reason for a sessionless message at a session entity.</summary>
+    public const string SessionIdIsNullReason = "SessionIdIsNull";
 }
