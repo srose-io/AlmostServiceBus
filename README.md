@@ -209,7 +209,7 @@ Everything in these tables runs against the emulator in CI on every commit, so t
 | CLI argument | Default | Description |
 |-------------|---------|-------------|
 | `--Port` | 5672 | Main public port (plain AMQP + plain HTTP, multiplexed) |
-| `--DashboardPort` | 15672 | Vue dashboard port (0 to disable) |
+| `--DashboardPort` | 15672 | Vue dashboard port, and `GET /healthz`. `0` disables the dashboard app entirely — nothing is bound, and there is no `/healthz`. |
 | `--AdminTlsEnabled` | `false` | Opt-in switch for the HTTPS admin endpoint. When `false` (default) no TLS listener is bound and no certificate is generated. Set to `true` to enable it. |
 | `--AdminTlsPort` | 5301 | HTTPS admin port for clients that hard-code TLS (Node.js/Java/Python). Only used when `--AdminTlsEnabled true`; `0` also disables it. |
 | `--AdminTlsCertDir` | `<app>/certs` | Directory where the emulator writes/reads its TLS material (CA, server PFX, Java truststore). Mount a volume here to keep the CA stable across restarts. |

@@ -32,6 +32,19 @@ All notable changes to this project are documented here. The format is based on
   publish succeeds. A session-required *queue* still rejects at the sender,
   which is also what Azure does.
 
+### Added
+- **`GET /healthz` on the dashboard port.** Answers `200 {"status":"ok"}` once
+  the AMQP listener and the port multiplexers are up, and
+  `503 {"status":"starting"}` before that. The dashboard's Kestrel starts
+  several steps before the AMQP listener, so a check against the dashboard root
+  could report "up" while a client's connection would still be refused.
+
+### Changed
+- **`DashboardPort=0` disables the dashboard.** The README documented `0` as
+  "disable", but Kestrel reads port 0 as "any free port", so asking for no
+  dashboard bound one anyway on a port nothing could predict. The dashboard app
+  is now not built or started at all when `DashboardPort` is `0`.
+
 ## [0.6.0] - 2026-09-11
 
 ### Added

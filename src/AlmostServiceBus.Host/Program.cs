@@ -91,40 +91,58 @@ mgmtApp.MapServiceBusManagementApi(registry);
 await mgmtApp.StartAsync();
 
 // ── Dashboard server (separate port, no route conflicts) ──
+//
+// DashboardPort=0 turns the dashboard off. Kestrel reads port 0 as "any free port", so asking
+// for no dashboard used to get one anyway, on a port nothing could predict.
 
-var dashBuilder = WebApplication.CreateBuilder(new WebApplicationOptions
+// Flipped once the AMQP listener and the multiplexers are up, which is what /healthz reports.
+var amqpReady = 0;
+
+WebApplication? dashApp = null;
+if (dashboardPort > 0)
 {
-    Args = args,
-    ContentRootPath = AppContext.BaseDirectory,
-});
-dashBuilder.Logging.SetMinimumLevel(LogLevel.Warning);
-dashBuilder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Warning);
-dashBuilder.Services.AddViteServices();
-dashBuilder.Services.AddCors();
+    var dashBuilder = WebApplication.CreateBuilder(new WebApplicationOptions
+    {
+        Args = args,
+        ContentRootPath = AppContext.BaseDirectory,
+    });
+    dashBuilder.Logging.SetMinimumLevel(LogLevel.Warning);
+    dashBuilder.Logging.AddFilter("Microsoft.Hosting.Lifetime", LogLevel.Warning);
+    dashBuilder.Services.AddViteServices();
+    dashBuilder.Services.AddCors();
 
-dashBuilder.WebHost.ConfigureKestrel(k =>
-{
-    k.ListenAnyIP(dashboardPort);
-});
+    dashBuilder.WebHost.ConfigureKestrel(k =>
+    {
+        k.ListenAnyIP(dashboardPort);
+    });
 
-var dashApp = dashBuilder.Build();
+    dashApp = dashBuilder.Build();
 
-dashApp.UseCors(policy => policy
-    .AllowAnyOrigin()
-    .AllowAnyMethod()
-    .AllowAnyHeader());
+    dashApp.UseCors(policy => policy
+        .AllowAnyOrigin()
+        .AllowAnyMethod()
+        .AllowAnyHeader());
 
-if (dashApp.Environment.IsDevelopment())
-{
-    dashApp.UseViteDevelopmentServer();
+    if (dashApp.Environment.IsDevelopment())
+    {
+        dashApp.UseViteDevelopmentServer();
+    }
+
+    dashApp.UseStaticFiles();
+
+    // Readiness, for a container orchestrator or a supervisor that has to know when the broker
+    // can take a connection. The dashboard answers as soon as Kestrel is up, several steps
+    // before the AMQP listener, so this reports the listener rather than itself.
+    dashApp.MapGet("/healthz", () => Volatile.Read(ref amqpReady) == 1
+        ? Results.Json(new { status = "ok" })
+        : Results.Json(new { status = "starting" }, statusCode: StatusCodes.Status503ServiceUnavailable));
+
+    dashApp.MapDashboardApi(registry, new EmulatorInfo(connStr, publicPort, mgmtApiPort, dashboardPort));
+    dashApp.MapDashboardSse(eventBus);
+    dashApp.MapFallbackToFile("index.html");
+
+    await dashApp.StartAsync();
 }
-
-dashApp.UseStaticFiles();
-dashApp.MapDashboardApi(registry, new EmulatorInfo(connStr, publicPort, mgmtApiPort, dashboardPort));
-dashApp.MapDashboardSse(eventBus);
-dashApp.MapFallbackToFile("index.html");
-
-await dashApp.StartAsync();
 
 // ── Scheduled message processor ──
 
@@ -147,6 +165,9 @@ _ = multiplexer.StartAsync(multiplexerCts.Token);
 // Microsoft emulator compatibility: admin HTTP on port 5300 (mgmtApiPort declared above)
 var mgmtMultiplexer = new TcpMultiplexer(mgmtApiPort, internalAmqpPort, internalHttpPort);
 _ = mgmtMultiplexer.StartAsync(multiplexerCts.Token);
+
+// Everything a client needs is listening: /healthz answers ok from here on.
+Volatile.Write(ref amqpReady, 1);
 
 // ── Startup banner ──
 
@@ -220,6 +241,12 @@ if (dashboardPort > 0)
 {
     Console.WriteLine($"  {bold}Dashboard{reset} {dim}— diagnostics UI{reset}");
     Console.WriteLine($"  {green}●{reset} {cyan}http://{publicHost}:{dashboardPort}{reset}");
+    Console.WriteLine($"  {green}●{reset} {cyan}http://{publicHost}:{dashboardPort}/healthz{reset} {dim}(readiness){reset}");
+    Console.WriteLine();
+}
+else
+{
+    Console.WriteLine($"  {bold}Dashboard{reset} {dim}— disabled (DashboardPort=0){reset}");
     Console.WriteLine();
 }
 
@@ -241,5 +268,5 @@ amqpServer.Stop();
 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
 await Task.WhenAll(
     mgmtApp.StopAsync(timeout.Token),
-    dashApp.StopAsync(timeout.Token)
+    dashApp?.StopAsync(timeout.Token) ?? Task.CompletedTask
 );

@@ -90,6 +90,7 @@ The image's entrypoint starts the host on the standard ports. Common overrides:
 |----------------------|---------|
 | `ASB_HOST` | Host name the emulator advertises and treats as the `default` namespace (plus comma-separated aliases). Set this when clients reach the emulator under a name other than the container hostname. |
 | `ASB_BIND_HOST` | Interface to bind (defaults to `0.0.0.0` in a container). |
+| `DashboardPort` | Dashboard and `/healthz` port (default `15672`). `0` disables the dashboard app entirely — no dashboard, no `/healthz`, nothing bound. The entrypoint passes `--DashboardPort 15672`, and an argument beats an environment variable, so pass `--DashboardPort 0` as an argument rather than setting this. |
 | `AdminTlsEnabled` | Set to `true` to enable the HTTPS admin endpoint and certificate generation (opt-in; off by default). |
 | `AdminTlsPort` | HTTPS admin port (default `5301`; only used when `AdminTlsEnabled=true`; `0` also disables it). |
 | `AdminTlsCertDir` | Where TLS material is written/read (default `/certs`, a declared `VOLUME`). |
@@ -103,6 +104,29 @@ supplying your own after the image name in `docker run`.
 
 The `AdminTls*` options configure the HTTPS admin endpoint and certificates — see
 [`../certs/README.md`](../certs/README.md) for the full reference.
+
+## Readiness
+
+`GET /healthz` on the dashboard port answers `200 {"status":"ok"}` once the AMQP listener and the
+port multiplexers are up, and `503 {"status":"starting"}` before that. The dashboard's Kestrel
+starts several steps earlier than the AMQP listener, so a check against the dashboard root can say
+"up" while a client's connection would still be refused; `/healthz` reports the listener.
+
+```bash
+docker run -d --name asb -p 5672:5672 -p 5300:5300 -p 15672:15672 almostservicebus:local
+until curl -fsS http://localhost:15672/healthz >/dev/null; do sleep 0.2; done
+```
+
+To turn the dashboard off, pass the arguments yourself — the entrypoint already passes
+`--DashboardPort 15672`, and a command-line argument beats `-e DashboardPort=0`:
+
+```bash
+docker run -d --name asb -p 5672:5672 -p 5300:5300 almostservicebus:local \
+  --Port 5672 --DashboardPort 0 --AdminTlsCertDir /certs
+```
+
+The dashboard app is then not started at all, so there is no `/healthz` either: wait on the AMQP
+port instead.
 
 ## HTTPS admin endpoint (Node.js, Java, Python)
 
