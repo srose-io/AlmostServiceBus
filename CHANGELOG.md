@@ -39,6 +39,13 @@ All notable changes to this project are documented here. The format is based on
   several steps before the AMQP listener, so a check against the dashboard root
   could report "up" while a client's connection would still be refused.
 
+### Added
+- **GHCR image workflow.** A push to `inplace` builds the image with
+  `docker/build-docker.sh` and pushes it to
+  `ghcr.io/<owner>/almostservicebus`, tagged with the commit sha and
+  `inplace`, then prints the digest into the run summary. The image is
+  consumed by digest, so the digest is the deliverable.
+
 ### Changed
 - **`DashboardPort=0` disables the dashboard.** The README documented `0` as
   "disable", but Kestrel reads port 0 as "any free port", so asking for no

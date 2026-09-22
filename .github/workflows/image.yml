@@ -1,0 +1,73 @@
+# Builds the container image and pushes it to GHCR on the fork's `inplace` branch.
+#
+# The image is consumed by digest, not by tag: the InPlace CLI pins
+# `ghcr.io/srose-io/almostservicebus@sha256:…` in its images file, so no developer machine ever
+# builds this and no commit here reaches anyone until someone copies a digest across. That is why
+# this job's last act is to print the digest, loudly, into the run summary.
+name: Image
+
+on:
+  push:
+    branches: [inplace]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/almostservicebus
+
+jobs:
+  build-and-push:
+    name: Build and push to GHCR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.x"
+
+      # docker/build-docker.sh publishes on the host so the Vue dashboard is built with the
+      # local toolchain, then packages artifacts/publish into the image.
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        run: ./docker/build-docker.sh --tag "$IMAGE:${{ github.sha }}" --skip-patches
+
+      - name: Tag and push
+        id: push
+        run: |
+          set -euo pipefail
+          docker tag "$IMAGE:${{ github.sha }}" "$IMAGE:inplace"
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:inplace"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:${{ github.sha }}" | cut -d@ -f2)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Print the digest
+        run: |
+          {
+            echo "## Image"
+            echo
+            echo '```'
+            echo "$IMAGE@${{ steps.push.outputs.digest }}"
+            echo '```'
+            echo
+            echo "Pin this digest in the InPlace CLI's \`configuration/images/local-databases.json\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$IMAGE@${{ steps.push.outputs.digest }}"
