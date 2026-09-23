@@ -129,6 +129,9 @@ public sealed class SubscriptionEntity
         destination.Enqueue(message);
     }
 
-    /// <summary>Azure's dead-letter reason for a sessionless message at a session entity.</summary>
-    public const string SessionIdIsNullReason = "SessionIdIsNull";
+    /// <summary>
+    /// Azure's dead-letter reason for a sessionless message at a session entity, word for word as
+    /// a real Standard namespace writes it (measured 23 September 2026, trailing full stop and all).
+    /// </summary>
+    public const string SessionIdIsNullReason = "Session id is null.";
 }

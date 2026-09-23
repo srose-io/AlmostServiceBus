@@ -123,6 +123,9 @@ public class TopicEntityTests
 
         var dead = session.Queue.DeadLetterQueue.PeekMessages();
         var deadLettered = Assert.Single(dead);
+        // The wording is Azure's own, measured on a Standard namespace; a caller that matches on
+        // the reason string has to get the same answer from both brokers.
+        Assert.Equal("Session id is null.", SubscriptionEntity.SessionIdIsNullReason);
         Assert.Equal(SubscriptionEntity.SessionIdIsNullReason, deadLettered.DeadLetterReason);
         Assert.Equal("Message has no session id and the entity requires a session.",
             deadLettered.DeadLetterErrorDescription);

@@ -1809,7 +1809,7 @@ public abstract class ConformanceTestBase : IAsyncLifetime
         var dead = await deadLetters.PeekMessagesAsync(10);
         var deadLettered = Assert.Single(dead);
         Assert.Equal("no-session", deadLettered.Body.ToString());
-        Assert.Equal("SessionIdIsNull", deadLettered.DeadLetterReason);
+        Assert.Equal("Session id is null.", deadLettered.DeadLetterReason);
 
         // Nothing active on the session subscription, and the plain one got its copy.
         await using var active = Client.CreateReceiver(topic, "session-sub");
