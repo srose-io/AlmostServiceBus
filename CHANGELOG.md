@@ -31,6 +31,16 @@ All notable changes to this project are documented here. The format is based on
   with reason `SessionIdIsNull`, as Azure and Microsoft's emulator do, and the
   publish succeeds. A session-required *queue* still rejects at the sender,
   which is also what Azure does.
+- **Runtime properties carry counts.** The management API's queue, topic and
+  subscription entries had no `MessageCount` or `CountDetails`, so every count
+  the SDK's `Get…RuntimePropertiesAsync` returned was zero, whatever the entity
+  held. They now report what Azure reports, measured against a Standard
+  namespace: a queue's active (locked messages included), dead-lettered and
+  scheduled messages, with the total counting all three; a topic's scheduled
+  messages and its `SubscriptionCount`; a subscription's active and
+  dead-lettered messages. A scheduled message counts on the queue or topic it
+  was sent to until it is delivered, and a subscription sees it only then. The
+  dashboard's entity overview gains a `scheduledCount` per queue and topic.
 
 ### Added
 - **`GET /healthz` on the dashboard port.** Answers `200 {"status":"ok"}` once

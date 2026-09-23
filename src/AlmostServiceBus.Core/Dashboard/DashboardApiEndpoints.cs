@@ -36,7 +36,8 @@ public static class DashboardApiEndpoints
     public static IEndpointRouteBuilder MapDashboardApi(
         this IEndpointRouteBuilder app,
         NamespaceRegistry registry,
-        EmulatorInfo info)
+        EmulatorInfo info,
+        ScheduledMessageProcessor? scheduledProcessor = null)
     {
         var api = app.MapGroup("/api/dashboard");
         api.MapGet("/info", () => info);
@@ -86,12 +87,17 @@ public static class DashboardApiEndpoints
             var context = registry.Get(ns);
             if (context is null) return TypedResults.NotFound();
 
+            int Scheduled(string entityName) =>
+                scheduledProcessor?.CountScheduledForEntity(context.Name, entityName) ?? 0;
+
             var queues = context.GetQueues().Select(q => new QueueInfo(
                 q.Name, q.MessageCount, q.DeadLetterQueue.MessageCount,
-                q.TotalMessageCount, q.ConsumedCount, q.MaxDeliveryCount, q.ForwardTo)).ToList();
+                q.TotalMessageCount, q.ConsumedCount, q.MaxDeliveryCount, q.ForwardTo,
+                Scheduled(q.Name))).ToList();
 
             var topics = context.GetTopics().Select(t => new TopicInfo(
                 t.Name,
+                Scheduled(t.Name),
                 t.GetSubscriptions().Select(s => new SubscriptionInfo(
                     s.Name, s.ForwardTo,
                     (s.ResolvedForwardToQueue ?? s.Queue).MessageCount,

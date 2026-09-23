@@ -15,8 +15,15 @@ public static class ManagementApiEndpoints
 
     public static IEndpointRouteBuilder MapServiceBusManagementApi(
         this IEndpointRouteBuilder app,
-        NamespaceRegistry registry)
+        NamespaceRegistry registry,
+        ScheduledMessageProcessor? scheduledProcessor = null)
     {
+        // Scheduled messages wait in the processor rather than in their entity, so a queue's or a
+        // topic's ScheduledMessageCount is read from there.
+        Func<string, int>? Scheduled(NamespaceContext ns) => scheduledProcessor is null
+            ? null
+            : entityName => scheduledProcessor.CountScheduledForEntity(ns.Name, entityName);
+
         // MassTransit uses entity names with '/' (e.g. "Namespace/EventType"),
         // so we must use catch-all route parameters and parse the path ourselves
         // to distinguish entity ops from subscription/rule ops.
@@ -137,7 +144,7 @@ public static class ManagementApiEndpoints
 
                 ApplyTopicProperties(entity, body);
 
-                var xml = AtomXmlWriter.WriteTopicEntry(entity, baseUrl);
+                var xml = AtomXmlWriter.WriteTopicEntry(entity, baseUrl, Scheduled(ns));
                 return Results.Content(xml, AtomXmlContentType,
                     statusCode: isUpdate ? StatusCodes.Status200OK : StatusCodes.Status201Created);
             }
@@ -158,7 +165,7 @@ public static class ManagementApiEndpoints
 
                 ApplyQueueProperties(entity, body);
 
-                var xml = AtomXmlWriter.WriteQueueEntry(entity, baseUrl);
+                var xml = AtomXmlWriter.WriteQueueEntry(entity, baseUrl, Scheduled(ns));
                 return Results.Content(xml, AtomXmlContentType,
                     statusCode: isUpdate ? StatusCodes.Status200OK : StatusCodes.Status201Created);
             }
@@ -181,7 +188,7 @@ public static class ManagementApiEndpoints
                     .OrderBy(q => q.Name, StringComparer.OrdinalIgnoreCase)
                     .Skip(skip)
                     .Take(top);
-                var feed = AtomXmlWriter.WriteQueueFeed(queues, baseUrl);
+                var feed = AtomXmlWriter.WriteQueueFeed(queues, baseUrl, Scheduled(ns));
                 return Results.Content(feed, AtomXmlContentType);
             }
 
@@ -193,7 +200,7 @@ public static class ManagementApiEndpoints
                     .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
                     .Skip(skip)
                     .Take(top);
-                var feed = AtomXmlWriter.WriteTopicFeed(topics, baseUrl);
+                var feed = AtomXmlWriter.WriteTopicFeed(topics, baseUrl, Scheduled(ns));
                 return Results.Content(feed, AtomXmlContentType);
             }
 
@@ -252,11 +259,11 @@ public static class ManagementApiEndpoints
 
             var queue = ns.GetQueue(entityName);
             if (queue is not null)
-                return Results.Content(AtomXmlWriter.WriteQueueEntry(queue, baseUrl), AtomXmlContentType);
+                return Results.Content(AtomXmlWriter.WriteQueueEntry(queue, baseUrl, Scheduled(ns)), AtomXmlContentType);
 
             var topic2 = ns.GetTopic(entityName);
             if (topic2 is not null)
-                return Results.Content(AtomXmlWriter.WriteTopicEntry(topic2, baseUrl), AtomXmlContentType);
+                return Results.Content(AtomXmlWriter.WriteTopicEntry(topic2, baseUrl, Scheduled(ns)), AtomXmlContentType);
 
             return ManagementApiErrors.EntityNotFound(entityName);
         });

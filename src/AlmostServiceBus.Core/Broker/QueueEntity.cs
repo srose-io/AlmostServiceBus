@@ -135,6 +135,18 @@ public sealed class QueueEntity : IDisposable
     public int MessageCount => _messageCount;
 
     /// <summary>
+    /// Messages in the queue, available or locked by a receiver: what Azure reports as
+    /// <c>ActiveMessageCount</c>. A locked message is still in the queue until it is settled.
+    /// </summary>
+    public int ActiveMessageCount => _allMessages.Count;
+
+    /// <summary>
+    /// Messages in the dead-letter queue, without creating it.
+    /// </summary>
+    public int DeadLetterMessageCount =>
+        _isDeadLetterQueue ? 0 : _deadLetterQueue?.ActiveMessageCount ?? 0;
+
+    /// <summary>
     /// Total messages that have passed through this queue (active + consumed + dead-lettered).
     /// Used by the dashboard to show queues that have had any activity.
     /// </summary>

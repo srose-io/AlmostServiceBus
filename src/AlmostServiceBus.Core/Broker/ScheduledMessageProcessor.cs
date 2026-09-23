@@ -75,6 +75,13 @@ public sealed class ScheduledMessageProcessor : IDisposable
     }
 
     /// <summary>
+    /// The number of messages scheduled for the given entity and not yet delivered: what the
+    /// management API reports as <c>ScheduledMessageCount</c> on a queue or a topic.
+    /// </summary>
+    public int CountScheduledForEntity(string namespaceName, string entityName) =>
+        GetScheduledForEntity(namespaceName, entityName).Count();
+
+    /// <summary>
     /// Looks up a single scheduled message by sequence number across all namespaces/entities.
     /// </summary>
     public BrokeredMessage? GetScheduledBySequence(string namespaceName, long sequenceNumber)

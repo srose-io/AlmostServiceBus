@@ -24,7 +24,8 @@ public record QueueInfo(
     int TotalMessageCount,
     int ConsumedCount,
     int MaxDeliveryCount,
-    string? ForwardTo);
+    string? ForwardTo,
+    int ScheduledCount);
 
 /// <summary>
 /// Configuration and runtime state of a queue as shown on the dashboard's Properties tab.
@@ -55,6 +56,7 @@ public record QueueProperties(
 
 public record TopicInfo(
     string Name,
+    int ScheduledCount,
     List<SubscriptionInfo> Subscriptions);
 
 public record SubscriptionInfo(

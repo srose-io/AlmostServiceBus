@@ -86,8 +86,16 @@ mgmtBuilder.WebHost.ConfigureKestrel(k =>
         k.ListenAnyIP(adminTlsPort, lo => lo.UseHttps(tlsBundle.ServerCertificate));
 });
 
+// ── Scheduled message processor ──
+//
+// Before the HTTP apps, which report the messages it holds.
+
+var defaultContext = registry.GetOrCreate("default");
+var scheduledProcessor = new ScheduledMessageProcessor(defaultContext);
+scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
+
 var mgmtApp = mgmtBuilder.Build();
-mgmtApp.MapServiceBusManagementApi(registry);
+mgmtApp.MapServiceBusManagementApi(registry, scheduledProcessor);
 await mgmtApp.StartAsync();
 
 // ── Dashboard server (separate port, no route conflicts) ──
@@ -137,18 +145,12 @@ if (dashboardPort > 0)
         ? Results.Json(new { status = "ok" })
         : Results.Json(new { status = "starting" }, statusCode: StatusCodes.Status503ServiceUnavailable));
 
-    dashApp.MapDashboardApi(registry, new EmulatorInfo(connStr, publicPort, mgmtApiPort, dashboardPort));
+    dashApp.MapDashboardApi(registry, new EmulatorInfo(connStr, publicPort, mgmtApiPort, dashboardPort), scheduledProcessor);
     dashApp.MapDashboardSse(eventBus);
     dashApp.MapFallbackToFile("index.html");
 
     await dashApp.StartAsync();
 }
-
-// ── Scheduled message processor ──
-
-var defaultContext = registry.GetOrCreate("default");
-var scheduledProcessor = new ScheduledMessageProcessor(defaultContext);
-scheduledProcessor.StartBackground(TimeSpan.FromMilliseconds(500));
 
 // ── AMQP server ──
 
