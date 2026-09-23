@@ -253,9 +253,12 @@ else
 Console.WriteLine($"  {dim}press Ctrl+C to shut down{reset}");
 Console.WriteLine();
 
-// Block until Ctrl+C or process exit, then shut everything down quickly
+// Block until we are asked to stop, then shut everything down quickly. The signals have to be
+// handled here: the ConsoleLifetime inside each WebApplication above already marks SIGTERM
+// handled and stops only its own host, so without ShutdownSignal a `docker stop` waited its
+// whole timeout and SIGKILLed the broker.
 var shutdownCts = new CancellationTokenSource();
-Console.CancelKeyPress += (_, e) => { e.Cancel = true; shutdownCts.Cancel(); };
+using var shutdownSignals = ShutdownSignal.Install(shutdownCts);
 AppDomain.CurrentDomain.ProcessExit += (_, _) => { shutdownCts.Cancel(); };
 
 try { await Task.Delay(Timeout.Infinite, shutdownCts.Token); } catch (OperationCanceledException) { }
